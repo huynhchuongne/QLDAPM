@@ -1,64 +1,63 @@
+import cloudinary
 from django.contrib import admin
-
-# Register your models here.
-from flask_admin.contrib.sqla import ModelView
-from flask_admin import Admin, BaseView, expose, AdminIndexView
-from app import app, db, dao
-from app.models import Category, Product, UserRoleEnum
-from flask_login import logout_user, current_user
-from flask import redirect, request
-
-
-class MyAdmin(AdminIndexView):
-    @expose('/')
-    def index(self):
-        return self.render('admin/index.html', stats=dao.count_products())
+from django.db.models import Count
+from django.template.response import TemplateResponse
+from django.utils.html import mark_safe
+from courses.models import Category, Course, Lesson, User, Tag, Comment, Like
+from django import forms
+from ckeditor_uploader.widgets import CKEditorUploadingWidget
+from django.urls import path
 
 
-admin = Admin(app=app, name='QUẢN TRỊ BÁN HÀNG', template_mode='bootstrap4', index_view=MyAdmin())
+class MyCourseAdminSite(admin.AdminSite):
+    site_header = 'eCourseOnline'
+
+    def get_urls(self):
+        return [path('course-stats/', self.stats_view)] + super().get_urls()
+
+    def stats_view(self, request):
+        course_stats = Category.objects.annotate(c=Count('course__id')).values('id', 'name', 'c')
+        return TemplateResponse(request, 'admin/stats.html', {
+            "course_stats": course_stats
+        })
 
 
-class AuthenticatedAdmin(ModelView):
-    def is_accessible(self):
-        return current_user.is_authenticated and current_user.user_role == UserRoleEnum.ADMIN
+admin_site = MyCourseAdminSite(name='iCourse')
 
 
-class AuthenticatedUser(BaseView):
-    def is_accessible(self):
-        return current_user.is_authenticated
+class CourseForm(forms.ModelForm):
+    description = forms.CharField(widget=CKEditorUploadingWidget)
+
+    class Meta:
+        model = Course
+        fields = '__all__'
 
 
-class MyProductView(AuthenticatedAdmin):
-    column_list = ['id', 'name', 'price']
-    can_export = True
-    column_searchable_list = ['name']
-    column_filters = ['price', 'name']
-    column_editable_list = ['name', 'price']
-    details_modal = True
-    edit_modal = True
+class MyCourseAdmin(admin.ModelAdmin):
+    list_display = ['id', 'name', 'created_date', 'updated_date', 'active']
+    search_fields = ['name', 'description']
+    list_filter = ['id', 'created_date', 'name']
+    readonly_fields = ['my_image']
+    form = CourseForm
 
 
-class MyCategoryView(AuthenticatedAdmin):
-    column_list = ['name', 'products']
+    def my_image(self, instance):
+        if instance:
+            if instance.image is cloudinary.CloudinaryResource:
+                return mark_safe(f"<img width='120' src='{instance.image.url}' />")
+
+            return mark_safe(f"<img width='120' src='/static/{instance.image.name}' />")
+
+    class Media:
+        css = {
+            'all': ('/static/css/style.css', )
+        }
 
 
-class StatsView(AuthenticatedUser):
-    @expose("/")
-    def index(self):
-        kw = request.args.get('kw')
-
-        return self.render('admin/stats.html', stats=dao.revenue_stats(kw=kw), mon_stats=dao.revenue_mon_stats())
-
-
-class LogoutView(AuthenticatedUser):
-    @expose("/")
-    def index(self):
-        logout_user()
-
-        return redirect('/admin')
-
-
-admin.add_view(MyCategoryView(Category, db.session))
-admin.add_view(MyProductView(Product, db.session))
-admin.add_view(StatsView(name='Thống kê báo cáo'))
-admin.add_view(LogoutView(name='Đăng xuất'))
+admin_site.register(Category)
+admin_site.register(Course, MyCourseAdmin)
+admin_site.register(Lesson)
+admin_site.register(User)
+admin_site.register(Tag)
+admin_site.register(Comment)
+admin_site.register(Like)
